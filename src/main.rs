@@ -118,11 +118,7 @@ async fn bootstrap(sender: &Sender<SendMessage>) {
         if let Ok(addr) = seed.trim().parse() {
             let peer = Peer::socket(addr);
             sender
-                .send(SendMessage::Group(SendType::Connect(
-                    0,
-                    peer,
-                    self_bytes.clone(),
-                )))
+                .send(SendMessage::Network(NetworkType::Connect(peer)))
                 .await
                 .expect("TDN channel closed");
         }
