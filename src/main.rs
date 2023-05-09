@@ -6,8 +6,8 @@ use subql_utils::{
     p2p::{JoinData, ROOT_GROUP_ID, ROOT_NAME},
 };
 use tdn::prelude::{
-    channel_rpc_channel, start_with_config, Config, HandleResult, Peer, ReceiveMessage, RecvType,
-    SendMessage, SendType,
+    channel_rpc_channel, start_with_config, Config, HandleResult, NetworkType, Peer,
+    ReceiveMessage, RecvType, SendMessage, SendType,
 };
 use tokio::sync::mpsc::Sender;
 
@@ -31,7 +31,7 @@ async fn main() {
 
     let mut config = Config::default();
 
-    config.only_stable_data = true;
+    config.only_stable_data = false;
     config.db_path = Some(PathBuf::from("./.data/p2p"));
     config.rpc_http = None;
     config.p2p_peer = Peer::socket(addr);
