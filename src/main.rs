@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use subql_utils::{
+use subql_indexer_utils::{
     constants::BOOTSTRAP,
     p2p::{JoinData, ROOT_GROUP_ID, ROOT_NAME},
 };
