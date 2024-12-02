@@ -1,10 +1,7 @@
 use std::io::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use subql_indexer_utils::{
-    constants::BOOTSTRAP,
-    p2p::{JoinData, ROOT_GROUP_ID, ROOT_NAME},
-};
+use subql_indexer_utils::{constants::BOOTSTRAP, p2p::ROOT_GROUP_ID};
 use tdn::prelude::{
     channel_rpc_channel, start_with_config, Config, HandleResult, NetworkType, Peer,
     ReceiveMessage, RecvType, SendMessage, SendType,
@@ -111,8 +108,8 @@ async fn handle_group(msg: RecvType) -> Result<HandleResult> {
 }
 
 async fn bootstrap(sender: &Sender<SendMessage>) {
-    let projects: Vec<String> = vec![ROOT_NAME.to_owned()];
-    let self_bytes = bincode::serialize(&JoinData(projects)).unwrap_or(vec![]);
+    // let projects: Vec<String> = vec![ROOT_NAME.to_owned()];
+    // let self_bytes = bincode::serialize(&JoinData(projects)).unwrap_or(vec![]);
 
     for seed in &BOOTSTRAP {
         if let Ok(addr) = seed.trim().parse() {
