@@ -1,3 +1,4 @@
+use mod_libp2p::{handle_swarm_event, start_swarm};
 use std::io::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use tdn::prelude::{
     ReceiveMessage, RecvType, SendMessage, SendType,
 };
 use tokio::sync::mpsc::Sender;
+mod mod_libp2p;
 
 #[tokio::main]
 async fn main() {
@@ -39,6 +41,10 @@ async fn main() {
     println!("* PERR ID       : {:?}", peer_addr);
 
     bootstrap(&send).await;
+
+    if let Ok(swarm) = start_swarm().await {
+        handle_swarm_event(swarm).await;
+    }
 
     while let Some(message) = out_recv.recv().await {
         match message {
