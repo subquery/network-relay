@@ -1,10 +1,12 @@
 use crate::mod_libp2p::behavior::AgentBehavior;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use either::Either;
 use libp2p::{
     core::transport::upgrade::Version,
     futures::StreamExt,
     gossipsub,
     identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig},
+    identity::{self, Keypair},
     kad::{store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig},
     multiaddr::Protocol,
     noise, ping,
@@ -31,20 +33,21 @@ pub mod behavior;
 pub mod message;
 
 pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
-    let ipfs_path = get_ipfs_path();
-    println!("using IPFS_PATH {ipfs_path:?}");
-    let psk: Option<PreSharedKey> = get_psk(&ipfs_path)?
-        .map(|text| PreSharedKey::from_str(&text))
-        .transpose()?;
+    let sk = std::env::var("ACCOUNT_SK").expect("ACCOUNT_SK missing in .env");
+    let private_key_bytes = hex::decode(sk)?;
+    let secret_key = identity::secp256k1::SecretKey::try_from_bytes(private_key_bytes)?;
+    let libp2p_keypair: Keypair = identity::secp256k1::Keypair::from(secret_key).into();
 
-    if let Some(psk) = psk {
-        println!("using swarm key with fingerprint: {}", psk.fingerprint());
+    let psk = get_psk();
+
+    if let Ok(psk) = psk {
+        info!("using swarm key with fingerprint: {}", psk.fingerprint());
     }
 
     // Create a Gosspipsub topic
     let gossipsub_topic = gossipsub::IdentTopic::new("chat");
 
-    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair)
         .with_tokio()
         .with_other_transport(|key| {
             let noise_config = noise::Config::new(key).unwrap();
@@ -52,11 +55,11 @@ pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
 
             let base_transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
             let maybe_encrypted = match psk {
-                Some(psk) => Either::Left(
+                Ok(psk) => Either::Left(
                     base_transport
                         .and_then(move |socket, _| PnetConfig::new(psk).handshake(socket)),
                 ),
-                None => Either::Right(base_transport),
+                Err(_) => Either::Right(base_transport),
             };
             maybe_encrypted
                 .upgrade(Version::V1Lazy)
@@ -66,7 +69,6 @@ pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
         .with_dns()?
         .with_behaviour(|key| {
             let local_peer_id = PeerId::from(key.clone().public());
-            info!("LocalPeerID: {local_peer_id}");
 
             let kad_config = KadConfig::new(StreamProtocol::new("/agent/connection/1.0.0"));
 
@@ -107,19 +109,22 @@ pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
             )
             .unwrap();
             let ping =
-                ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(1)));
+                ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(10)));
             AgentBehavior::new(kad, identify, rr_behavior, gossipsub, ping)
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 
-    println!("Subscribing to {gossipsub_topic:?}");
     swarm
         .behaviour_mut()
         .gossipsub
         .subscribe(&gossipsub_topic)
         .unwrap();
 
+    let private_net_address =
+        std::env::var("PRIVITE_NET_ADDRESS").unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
+    let private_net_address = private_net_address.parse()?;
+    swarm.listen_on(private_net_address)?;
     Ok(swarm)
 }
 
@@ -128,7 +133,7 @@ pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>) {
         loop {
             tokio::select! {
                 event = swarm.next() => {
-                    println!("event is {:?}", event);
+                    info!("event is {:?}", event);
                 }
             }
         }
@@ -149,13 +154,14 @@ fn get_ipfs_path() -> Box<Path> {
 }
 
 /// Read the pre shared key file from the given ipfs directory
-fn get_psk(path: &Path) -> std::io::Result<Option<String>> {
-    let swarm_key_file = path.join("swarm.key");
-    match fs::read_to_string(swarm_key_file) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
-    }
+fn get_psk() -> Result<PreSharedKey, Box<dyn Error>> {
+    let base64_key =
+        std::env::var("PRIVITE_NET_KEY").map_err(|_| "PRIVITE_NET_KEY missing in .env")?;
+    let bytes = STANDARD.decode(&base64_key)?;
+    let key: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "Decoded key must be 32 bytes long")?;
+    Ok(PreSharedKey::new(key))
 }
 
 /// for a multiaddr that ends with a peer id, this strips this suffix. Rust-libp2p
@@ -166,7 +172,7 @@ fn strip_peer_id(addr: &mut Multiaddr) {
         Some(Protocol::P2p(peer_id)) => {
             let mut addr = Multiaddr::empty();
             addr.push(Protocol::P2p(peer_id));
-            println!("removing peer id {addr} so this address can be dialed by rust-libp2p");
+            info!("removing peer id {addr} so this address can be dialed by rust-libp2p");
         }
         Some(other) => addr.push(other),
         _ => {}

@@ -8,13 +8,22 @@ use tdn::prelude::{
     ReceiveMessage, RecvType, SendMessage, SendType,
 };
 use tokio::sync::mpsc::Sender;
+use tracing::info;
 mod mod_libp2p;
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
     std::env::set_var("RUST_LOG", "info");
 
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .event_format(
+            tracing_subscriber::fmt::format()
+                .with_file(true)
+                .with_line_number(true),
+        )
+        .init();
 
     let addr_str = std::env::args().nth(1).unwrap_or("0.0.0.0:7370".to_owned());
     let addr: SocketAddr = addr_str.parse().expect("invalid addr");
@@ -38,12 +47,13 @@ async fn main() {
     config.group_ids = vec![ROOT_GROUP_ID];
 
     let (peer_addr, send, mut out_recv) = start_with_config(config).await.unwrap();
-    println!("* PERR ID       : {:?}", peer_addr);
+    println!("* TDN PEER ID       : {:?}", peer_addr);
 
     bootstrap(&send).await;
 
-    if let Ok(swarm) = start_swarm().await {
-        handle_swarm_event(swarm).await;
+    match start_swarm().await {
+        Ok(swarm) => handle_swarm_event(swarm).await,
+        Err(err) => info!("start libp2p swarm failed, the err is {:?}", err),
     }
 
     while let Some(message) = out_recv.recv().await {
@@ -54,7 +64,7 @@ async fn main() {
                 }
             }
             ReceiveMessage::NetworkLost => {
-                println!("No network connections, will re-connnect");
+                // println!("No network connections, will re-connnect");
                 bootstrap(&send).await;
             }
             _ => {

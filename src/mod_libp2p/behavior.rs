@@ -19,11 +19,11 @@ use crate::mod_libp2p::message::AgentMessage;
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "AgentEvent")]
 pub(crate) struct AgentBehavior {
-    identify: IdentifyBehavior,
-    kad: KademliaBehavior<KademliaInMemory>,
-    rr: RequestResponseBehavior<Vec<u8>, Vec<u8>>,
+    pub identify: IdentifyBehavior,
+    pub kad: KademliaBehavior<KademliaInMemory>,
+    pub rr: RequestResponseBehavior<Vec<u8>, Vec<u8>>,
     pub gossipsub: GossipsubBehavior,
-    ping: ping::Behaviour,
+    pub ping: ping::Behaviour,
 }
 
 impl AgentBehavior {
