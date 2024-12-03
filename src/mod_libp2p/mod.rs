@@ -1,4 +1,7 @@
 use crate::mod_libp2p::behavior::AgentBehavior;
+use crate::mod_libp2p::behavior::AgentEvent;
+use crate::mod_libp2p::message::AgentMessage;
+use crate::mod_libp2p::message::GreetResponse;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use either::Either;
 use libp2p::{
@@ -13,20 +16,22 @@ use libp2p::{
     pnet::{PnetConfig, PreSharedKey},
     request_response::{
         cbor::Behaviour as RequestResponseBehavior, Config as RequestResponseConfig,
+        Event as RequestResponseEvent, Message as RequestResponseMessage,
         ProtocolSupport as RequestResponseProtocolSupport,
     },
+    swarm::SwarmEvent,
     tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm, Transport,
 };
 use std::{
     collections::hash_map::DefaultHasher,
     env,
     error::Error,
-    fs,
     hash::{Hash, Hasher},
     path::Path,
     str::FromStr,
     time::Duration,
 };
+use tracing::error;
 use tracing::info;
 
 pub mod behavior;
@@ -132,12 +137,83 @@ pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>) {
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                event = swarm.next() => {
+                Some(event) = swarm.next() => {
                     info!("event is {:?}", event);
+                    handle_event(&mut swarm, event);
                 }
             }
         }
     });
+}
+
+async fn handle_event(swarm: &mut Swarm<AgentBehavior>, swarm_event: SwarmEvent<AgentEvent>) {
+    match swarm_event {
+        SwarmEvent::Behaviour(AgentEvent::RequestResponse(event)) => match event {
+            RequestResponseEvent::Message { peer, message } => match message {
+                RequestResponseMessage::Request {
+                    request_id,
+                    request,
+                    channel,
+                } => {
+                    let parsed_request =
+                        AgentMessage::from_binary(&request).expect("Failed to decode request");
+                    match parsed_request {
+                        AgentMessage::GreeRequest(req) => {
+                            info!(
+                                "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
+                                 {request_id} | RequestMessage: {0:?}",
+                                req.message
+                            );
+                        }
+                        AgentMessage::AnotherMessage(msg) => {
+                            info!(
+                                "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
+                                 {request_id} | AnotherMessage: {0:?}",
+                                msg.info
+                            );
+                        }
+                        _ => {
+                            info!("Received unknown message type.");
+                        }
+                    }
+                    let response = GreetResponse {
+                        message: format!("Response from: relay or metrics: hello too").to_string(),
+                    };
+                    let response_message = AgentMessage::GreetResponse(response);
+                    let result = swarm
+                        .behaviour_mut()
+                        .send_response(channel, response_message);
+                    if result.is_err() {
+                        let err = result.unwrap_err();
+                        error!("Error sending response: {err:?}")
+                    } else {
+                        info!("Sending a message was success")
+                    }
+                }
+                RequestResponseMessage::Response {
+                    request_id,
+                    response,
+                } => {
+                    let parsed_response =
+                        AgentMessage::from_binary(&response).expect("Failed to decode response");
+                    match parsed_response {
+                        AgentMessage::GreetResponse(res) => {
+                            info!(
+                                "RequestResponseEvent::Message::Response -> PeerID: {peer} | RequestID: \
+                                 {request_id} | Response: {0:?}",
+                                res.message
+                            )
+                        }
+                        _ => {
+                            info!("Received unknown response type.");
+                        }
+                    }
+                }
+                _ => {}
+            },
+        },
+        _ => {}
+    }
 }
 
 /// Get the current ipfs repo path, either from the IPFS_PATH environment variable or
