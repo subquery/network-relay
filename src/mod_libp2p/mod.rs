@@ -209,8 +209,8 @@ async fn handle_event(swarm: &mut Swarm<AgentBehavior>, swarm_event: SwarmEvent<
                         }
                     }
                 }
-                _ => {}
             },
+            _ => {}
         },
         _ => {}
     }
