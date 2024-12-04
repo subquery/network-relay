@@ -52,7 +52,7 @@ async fn main() {
     bootstrap(&send).await;
 
     match start_swarm().await {
-        Ok(swarm) => handle_swarm_event(swarm).await,
+        Ok((swarm, local_key)) => handle_swarm_event(swarm, local_key).await,
         Err(err) => info!("start libp2p swarm failed, the err is {:?}", err),
     }
 

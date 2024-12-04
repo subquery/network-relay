@@ -1,7 +1,7 @@
-use crate::mod_libp2p::behavior::AgentBehavior;
-use crate::mod_libp2p::behavior::AgentEvent;
-use crate::mod_libp2p::message::AgentMessage;
-use crate::mod_libp2p::message::GreetResponse;
+use crate::mod_libp2p::{
+    behavior::{AgentBehavior, AgentEvent},
+    message::{AgentMessage, GreetResponse},
+};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use either::Either;
 use libp2p::{
@@ -33,11 +33,12 @@ use std::{
 };
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 pub mod behavior;
 pub mod message;
 
-pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
+pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Error>> {
     let sk = std::env::var("ACCOUNT_SK").expect("ACCOUNT_SK missing in .env");
     let private_key_bytes = hex::decode(sk)?;
     let secret_key = identity::secp256k1::SecretKey::try_from_bytes(private_key_bytes)?;
@@ -52,7 +53,7 @@ pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
     // Create a Gosspipsub topic
     let gossipsub_topic = gossipsub::IdentTopic::new("chat");
 
-    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair)
+    let mut swarm = libp2p::SwarmBuilder::with_existing_identity(libp2p_keypair.clone())
         .with_tokio()
         .with_other_transport(|key| {
             let noise_config = noise::Config::new(key).unwrap();
@@ -130,89 +131,97 @@ pub async fn start_swarm() -> Result<Swarm<AgentBehavior>, Box<dyn Error>> {
         std::env::var("PRIVITE_NET_ADDRESS").unwrap_or("/ip4/0.0.0.0/tcp/8000".to_string());
     let private_net_address = private_net_address.parse()?;
     swarm.listen_on(private_net_address)?;
-    Ok(swarm)
+    Ok((swarm, libp2p_keypair))
 }
 
-pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>) {
+pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>, local_key: Keypair) {
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 Some(event) = swarm.next() => {
                     info!("event is {:?}", event);
-                    handle_event(&mut swarm, event);
+                    handle_event(&mut swarm, event, local_key.clone()).await;
                 }
             }
         }
     });
 }
 
-async fn handle_event(swarm: &mut Swarm<AgentBehavior>, swarm_event: SwarmEvent<AgentEvent>) {
+async fn handle_event(
+    swarm: &mut Swarm<AgentBehavior>,
+    swarm_event: SwarmEvent<AgentEvent>,
+    local_key: Keypair,
+) {
+    info!("swarm_event is {:?}", swarm_event);
     match swarm_event {
-        SwarmEvent::Behaviour(AgentEvent::RequestResponse(event)) => match event {
-            RequestResponseEvent::Message { peer, message } => match message {
-                RequestResponseMessage::Request {
-                    request_id,
-                    request,
-                    channel,
-                } => {
-                    let parsed_request =
-                        AgentMessage::from_binary(&request).expect("Failed to decode request");
-                    match parsed_request {
-                        AgentMessage::GreeRequest(req) => {
-                            info!(
+        SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
+            peer,
+            message,
+        })) => match message {
+            RequestResponseMessage::Request {
+                request_id,
+                request,
+                channel,
+            } => {
+                let parsed_request =
+                    AgentMessage::from_binary(&request).expect("Failed to decode request");
+                match parsed_request {
+                    AgentMessage::GreeRequest(req) => {
+                        info!(
                                 "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
                                  {request_id} | RequestMessage: {0:?}",
                                 req.message
                             );
-                        }
-                        AgentMessage::AnotherMessage(msg) => {
-                            info!(
+                    }
+                    AgentMessage::AnotherMessage(msg) => {
+                        info!(
                                 "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
                                  {request_id} | AnotherMessage: {0:?}",
                                 msg.info
                             );
-                        }
-                        _ => {
-                            info!("Received unknown message type.");
-                        }
                     }
-                    let response = GreetResponse {
-                        message: format!("Response from: relay or metrics: hello too").to_string(),
-                    };
-                    let response_message = AgentMessage::GreetResponse(response);
-                    let result = swarm
-                        .behaviour_mut()
-                        .send_response(channel, response_message);
-                    if result.is_err() {
-                        let err = result.unwrap_err();
-                        error!("Error sending response: {err:?}")
-                    } else {
-                        info!("Sending a message was success")
+                    _ => {
+                        info!("Received unknown message type.");
                     }
                 }
-                RequestResponseMessage::Response {
-                    request_id,
-                    response,
-                } => {
-                    let parsed_response =
-                        AgentMessage::from_binary(&response).expect("Failed to decode response");
-                    match parsed_response {
-                        AgentMessage::GreetResponse(res) => {
-                            info!(
+                let local_peer_id = local_key.public().to_peer_id();
+                let response = GreetResponse {
+                    message: format!("Response from: {local_peer_id}: hello too").to_string(),
+                };
+                let response_message = AgentMessage::GreetResponse(response);
+                let result = swarm
+                    .behaviour_mut()
+                    .send_response(channel, response_message);
+                if result.is_err() {
+                    let err = result.unwrap_err();
+                    error!("Error sending response: {err:?}")
+                } else {
+                    info!("Sending a message was success")
+                }
+            }
+            RequestResponseMessage::Response {
+                request_id,
+                response,
+            } => {
+                let parsed_response =
+                    AgentMessage::from_binary(&response).expect("Failed to decode response");
+                match parsed_response {
+                    AgentMessage::GreetResponse(res) => {
+                        info!(
                                 "RequestResponseEvent::Message::Response -> PeerID: {peer} | RequestID: \
                                  {request_id} | Response: {0:?}",
                                 res.message
                             )
-                        }
-                        _ => {
-                            info!("Received unknown response type.");
-                        }
+                    }
+                    _ => {
+                        info!("Received unknown response type.");
                     }
                 }
-            },
-            _ => {}
+            }
         },
-        _ => {}
+        _ => {
+            info!("swarm_event is {:?}", swarm_event);
+        }
     }
 }
 
