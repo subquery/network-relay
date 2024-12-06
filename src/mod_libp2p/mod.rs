@@ -7,7 +7,7 @@ use either::Either;
 use libp2p::{
     core::transport::upgrade::Version,
     futures::StreamExt,
-    gossipsub,
+    gossipsub::{self, Event as GossipsubEvent},
     identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig},
     identity::{self, Keypair},
     kad::{store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig},
@@ -77,14 +77,8 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
             let local_peer_id = PeerId::from(key.clone().public());
 
             let kad_config = KadConfig::new(StreamProtocol::new("/agent/connection/1.0.0"));
-
             let kad_memory = KadInMemory::new(local_peer_id);
             let kad = KadBehavior::with_config(local_peer_id, kad_memory, kad_config);
-
-            let identify_config =
-                IdentifyConfig::new("/agent/connection/1.0.0".to_string(), key.clone().public())
-                    .with_push_listen_addr_updates(true)
-                    .with_interval(Duration::from_secs(30));
 
             let rr_config = RequestResponseConfig::default();
             let rr_protocol = StreamProtocol::new("/agent/message/1.0.0");
@@ -93,6 +87,10 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
                 rr_config,
             );
 
+            let identify_config =
+                IdentifyConfig::new("/agent/connection/1.0.0".to_string(), key.clone().public())
+                    .with_push_listen_addr_updates(true)
+                    .with_interval(Duration::from_secs(30));
             let identify = IdentifyBehavior::new(identify_config);
 
             let message_id_fn = |message: &gossipsub::Message| {
@@ -114,6 +112,7 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
                 gossipsub_config,
             )
             .unwrap();
+
             let ping =
                 ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(10)));
             AgentBehavior::new(kad, identify, rr_behavior, gossipsub, ping)
@@ -152,7 +151,6 @@ async fn handle_event(
     swarm_event: SwarmEvent<AgentEvent>,
     local_key: Keypair,
 ) {
-    info!("swarm_event is {:?}", swarm_event);
     match swarm_event {
         SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
             peer,
@@ -166,7 +164,7 @@ async fn handle_event(
                 let parsed_request =
                     AgentMessage::from_binary(&request).expect("Failed to decode request");
                 match parsed_request {
-                    AgentMessage::GreeRequest(req) => {
+                    AgentMessage::GreetRequest(req) => {
                         info!(
                                 "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
                                  {request_id} | RequestMessage: {0:?}",
@@ -219,9 +217,16 @@ async fn handle_event(
                 }
             }
         },
-        _ => {
-            info!("swarm_event is {:?}", swarm_event);
-        }
+        SwarmEvent::Behaviour(AgentEvent::Gossipsub(event)) => match event {
+            GossipsubEvent::Message { message, .. } => {
+                match AgentMessage::from_binary(&message.data) {
+                    Ok(agent_message) => info!("broadcast agent message is {:#?}", agent_message),
+                    _ => {}
+                }
+            }
+            _ => {}
+        },
+        _ => {}
     }
 }
 

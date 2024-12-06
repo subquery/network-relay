@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, Error as SerdeJsonError};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GreeRequest {
+pub struct GreetRequest {
     pub message: String,
 }
 
@@ -21,7 +21,7 @@ pub struct AnotherMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")] // Optional: Use tags to differentiate types in JSON
 pub enum AgentMessage {
-    GreeRequest(GreeRequest),
+    GreetRequest(GreetRequest),
     GreetResponse(GreetResponse),
     AnotherMessage(AnotherMessage),
 }
