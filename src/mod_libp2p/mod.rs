@@ -38,6 +38,10 @@ use tracing::warn;
 pub mod behavior;
 pub mod message;
 
+const BOOTNODES: [&str; 1] = ["16Uiu2HAmGhmfeYmefx3fJGkojaUBkWS8oYZrkmYmXZ3Ey844qLwf"];
+
+const TESTNET_ADDRESS: [&str; 1] = ["/ip4/192.168.1.136/tcp/8003"];
+
 pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Error>> {
     let sk = std::env::var("ACCOUNT_SK").expect("ACCOUNT_SK missing in .env");
     let private_key_bytes = hex::decode(sk)?;
@@ -57,8 +61,8 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
         .with_tokio()
         .with_other_transport(|key| {
             let noise_config = noise::Config::new(key).unwrap();
-            let yamux_config = yamux::Config::default();
-
+            let mut yamux_config = yamux::Config::default();
+            yamux_config.set_max_num_streams(1024 * 1024);
             let base_transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
             let maybe_encrypted = match psk {
                 Ok(psk) => Either::Left(
@@ -80,7 +84,8 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
             let kad_memory = KadInMemory::new(local_peer_id);
             let kad = KadBehavior::with_config(local_peer_id, kad_memory, kad_config);
 
-            let rr_config = RequestResponseConfig::default();
+            let rr_config =
+                RequestResponseConfig::default().with_max_concurrent_streams(1024 * 1024);
             let rr_protocol = StreamProtocol::new("/agent/message/1.0.0");
             let rr_behavior = RequestResponseBehavior::<Vec<u8>, Vec<u8>>::new(
                 [(rr_protocol, RequestResponseProtocolSupport::Full)],
@@ -120,6 +125,19 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 
+    for (peer, addr) in BOOTNODES.iter().zip(TESTNET_ADDRESS.iter()) {
+        let peer_id: PeerId = peer.parse()?;
+        let multiaddr: Multiaddr = addr.parse()?;
+        swarm.behaviour_mut().kad.add_address(&peer_id, multiaddr);
+    }
+
+    let mut multiaddr_list: Vec<Multiaddr> = vec![];
+    for to_dial in TESTNET_ADDRESS {
+        let addr: Multiaddr = parse_legacy_multiaddr(&to_dial)?;
+        multiaddr_list.push(addr.clone());
+        let _ = swarm.dial(addr)?;
+    }
+
     swarm
         .behaviour_mut()
         .gossipsub
@@ -151,6 +169,7 @@ async fn handle_event(
     swarm_event: SwarmEvent<AgentEvent>,
     local_key: Keypair,
 ) {
+    info!("swarm_event is {:?}", swarm_event);
     match swarm_event {
         SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
             peer,
@@ -164,20 +183,8 @@ async fn handle_event(
                 let parsed_request =
                     AgentMessage::from_binary(&request).expect("Failed to decode request");
                 match parsed_request {
-                    AgentMessage::GreetRequest(req) => {
-                        info!(
-                                "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
-                                 {request_id} | RequestMessage: {0:?}",
-                                req.message
-                            );
-                    }
-                    AgentMessage::AnotherMessage(msg) => {
-                        info!(
-                                "RequestResponseEvent::Message::Request -> PeerID: {peer} | RequestID: \
-                                 {request_id} | AnotherMessage: {0:?}",
-                                msg.info
-                            );
-                    }
+                    AgentMessage::GreetRequest(..) => {}
+                    AgentMessage::AnotherMessage(..) => {}
                     _ => {
                         info!("Received unknown message type.");
                     }
@@ -193,8 +200,6 @@ async fn handle_event(
                 if result.is_err() {
                     let err = result.unwrap_err();
                     error!("Error sending response: {err:?}")
-                } else {
-                    info!("Sending a message was success")
                 }
             }
             RequestResponseMessage::Response {
@@ -204,23 +209,20 @@ async fn handle_event(
                 let parsed_response =
                     AgentMessage::from_binary(&response).expect("Failed to decode response");
                 match parsed_response {
-                    AgentMessage::GreetResponse(res) => {
-                        info!(
-                                "RequestResponseEvent::Message::Response -> PeerID: {peer} | RequestID: \
-                                 {request_id} | Response: {0:?}",
-                                res.message
-                            )
-                    }
+                    AgentMessage::GreetResponse(..) => {}
                     _ => {
                         info!("Received unknown response type.");
                     }
                 }
             }
         },
+        // Behaviour(Gossipsub(Message { propagation_source: PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS"), message_id: MessageId(3134393231373432343733363435313537303031), message: Message { data: 7b2274797065223a22.., source: Some(PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS")), sequence_number: Some(1733299423449580817), topic: TopicHash { hash: "chat" } } }))
         SwarmEvent::Behaviour(AgentEvent::Gossipsub(event)) => match event {
             GossipsubEvent::Message { message, .. } => {
                 match AgentMessage::from_binary(&message.data) {
-                    Ok(agent_message) => info!("broadcast agent message is {:#?}", agent_message),
+                    Ok(..) => {
+                        // info!("broadcast agent message is {:#?}", agent_message);
+                    }
                     _ => {}
                 }
             }
@@ -262,7 +264,7 @@ fn strip_peer_id(addr: &mut Multiaddr) {
         Some(Protocol::P2p(peer_id)) => {
             let mut addr = Multiaddr::empty();
             addr.push(Protocol::P2p(peer_id));
-            info!("removing peer id {addr} so this address can be dialed by rust-libp2p");
+            // info!("removing peer id {addr} so this address can be dialed by rust-libp2p");
         }
         Some(other) => addr.push(other),
         _ => {}
