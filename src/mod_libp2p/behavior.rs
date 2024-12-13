@@ -5,6 +5,7 @@ use libp2p::{
         store::MemoryStore as KademliaInMemory, Behaviour as KademliaBehavior,
         Event as KademliaEvent, RoutingUpdate,
     },
+    mdns::{self, Event as MdnsEvent},
     ping::{self, Behaviour as PingBehaviour, Event as PingEvent},
     request_response::{
         cbor::Behaviour as RequestResponseBehavior, Event as RequestResponseEvent,
@@ -21,7 +22,7 @@ use crate::mod_libp2p::message::AgentMessage;
 pub(crate) struct AgentBehavior {
     pub identify: IdentifyBehavior,
     pub kad: KademliaBehavior<KademliaInMemory>,
-    pub rr: RequestResponseBehavior<Vec<u8>, Vec<u8>>,
+    pub rr: RequestResponseBehavior<AgentMessage, AgentMessage>,
     pub gossipsub: GossipsubBehavior,
     pub ping: ping::Behaviour,
 }
@@ -30,7 +31,7 @@ impl AgentBehavior {
     pub fn new(
         kad: KademliaBehavior<KademliaInMemory>,
         identify: IdentifyBehavior,
-        rr: RequestResponseBehavior<Vec<u8>, Vec<u8>>,
+        rr: RequestResponseBehavior<AgentMessage, AgentMessage>,
         gossipsub: GossipsubBehavior,
         ping: PingBehaviour,
     ) -> Self {
@@ -48,17 +49,17 @@ impl AgentBehavior {
     }
 
     pub fn send_message(&mut self, peer_id: &PeerId, message: AgentMessage) -> OutboundRequestId {
-        let binary_message = message.to_binary().expect("Failed to serialize message");
-        self.rr.send_request(peer_id, binary_message)
+        // let binary_message = message.to_binary().expect("Failed to serialize message");
+        self.rr.send_request(peer_id, message)
     }
 
     pub fn send_response(
         &mut self,
-        ch: RequestResponseChannel<Vec<u8>>,
+        ch: RequestResponseChannel<AgentMessage>,
         rs: AgentMessage,
-    ) -> Result<(), Vec<u8>> {
-        let binary_response = rs.to_binary().expect("Failed to serialize response");
-        self.rr.send_response(ch, binary_response)
+    ) -> Result<(), AgentMessage> {
+        // let binary_response = rs.to_binary().expect("Failed to serialize response");
+        self.rr.send_response(ch, rs)
     }
 
     pub fn set_server_mode(&mut self) {
@@ -70,9 +71,10 @@ impl AgentBehavior {
 pub(crate) enum AgentEvent {
     Identify(IdentifyEvent),
     Kad(KademliaEvent),
-    RequestResponse(RequestResponseEvent<Vec<u8>, Vec<u8>>),
+    RequestResponse(RequestResponseEvent<AgentMessage, AgentMessage>),
     Gossipsub(GossipsubEvent),
     Ping(PingEvent),
+    Mdns(MdnsEvent),
 }
 
 impl From<IdentifyEvent> for AgentEvent {
@@ -87,8 +89,8 @@ impl From<KademliaEvent> for AgentEvent {
     }
 }
 
-impl From<RequestResponseEvent<Vec<u8>, Vec<u8>>> for AgentEvent {
-    fn from(value: RequestResponseEvent<Vec<u8>, Vec<u8>>) -> Self {
+impl From<RequestResponseEvent<AgentMessage, AgentMessage>> for AgentEvent {
+    fn from(value: RequestResponseEvent<AgentMessage, AgentMessage>) -> Self {
         Self::RequestResponse(value)
     }
 }
@@ -102,5 +104,11 @@ impl From<GossipsubEvent> for AgentEvent {
 impl From<PingEvent> for AgentEvent {
     fn from(value: PingEvent) -> Self {
         Self::Ping(value)
+    }
+}
+
+impl From<MdnsEvent> for AgentEvent {
+    fn from(value: MdnsEvent) -> Self {
+        Self::Mdns(value)
     }
 }

@@ -11,6 +11,7 @@ use libp2p::{
     identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig},
     identity::{self, Keypair},
     kad::{store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig},
+    mdns,
     multiaddr::Protocol,
     noise, ping,
     pnet::{PnetConfig, PreSharedKey},
@@ -38,7 +39,7 @@ use tracing::warn;
 pub mod behavior;
 pub mod message;
 
-const BOOTNODES: [&str; 1] = ["16Uiu2HAmGhmfeYmefx3fJGkojaUBkWS8oYZrkmYmXZ3Ey844qLwf"];
+const BOOTNODES: [&str; 1] = ["16Uiu2HAmLiJHsiwFyVEXnN6QvdH1eVBrsaTNdPqA6xxJbTf1bMbz"];
 
 const TESTNET_ADDRESS: [&str; 1] = ["/ip4/192.168.1.136/tcp/8003"];
 
@@ -87,7 +88,7 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
             let rr_config =
                 RequestResponseConfig::default().with_max_concurrent_streams(1024 * 1024);
             let rr_protocol = StreamProtocol::new("/agent/message/1.0.0");
-            let rr_behavior = RequestResponseBehavior::<Vec<u8>, Vec<u8>>::new(
+            let rr_behavior = RequestResponseBehavior::<AgentMessage, AgentMessage>::new(
                 [(rr_protocol, RequestResponseProtocolSupport::Full)],
                 rr_config,
             );
@@ -120,6 +121,7 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
 
             let ping =
                 ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(10)));
+            let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id).unwrap();
             AgentBehavior::new(kad, identify, rr_behavior, gossipsub, ping)
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
@@ -180,9 +182,9 @@ async fn handle_event(
                 request,
                 channel,
             } => {
-                let parsed_request =
-                    AgentMessage::from_binary(&request).expect("Failed to decode request");
-                match parsed_request {
+                // let parsed_request =
+                //     AgentMessage::from_binary(&request).expect("Failed to decode request");
+                match request {
                     AgentMessage::GreetRequest(..) => {}
                     AgentMessage::AnotherMessage(..) => {}
                     _ => {
@@ -206,9 +208,9 @@ async fn handle_event(
                 request_id,
                 response,
             } => {
-                let parsed_response =
-                    AgentMessage::from_binary(&response).expect("Failed to decode response");
-                match parsed_response {
+                // let parsed_response =
+                //     AgentMessage::from_binary(&response).expect("Failed to decode response");
+                match response {
                     AgentMessage::GreetResponse(..) => {}
                     _ => {
                         info!("Received unknown response type.");
