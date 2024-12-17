@@ -1,3 +1,4 @@
+use crate::mod_libp2p::message::GreetRequest;
 use crate::mod_libp2p::{
     behavior::{AgentBehavior, AgentEvent},
     message::{AgentMessage, GreetResponse},
@@ -32,6 +33,7 @@ use std::{
     str::FromStr,
     time::Duration,
 };
+use tokio::time;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -154,12 +156,28 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
 }
 
 pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>, local_key: Keypair) {
+    let mut interval1 = time::interval(Duration::from_secs(8));
+    let mut peer_list = vec![];
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 Some(event) = swarm.next() => {
-                    info!("event is {:?}", event);
-                    handle_event(&mut swarm, event, local_key.clone()).await;
+                    warn!("event is {:?}", event);
+                    handle_event(&mut swarm, event, local_key.clone(), &mut peer_list).await;
+                }
+                _ = interval1.tick() => {
+                    let local_peer_id = local_key.public().to_peer_id();
+                    let request = GreetRequest {
+                        message: format!("Send message from: {local_peer_id}:hello gause from network relay -----------------------"),
+                    };
+                    let request_message = AgentMessage::GreetRequest(request);
+                    for peer_id in &peer_list {
+                        let _request_id = swarm
+                            .behaviour_mut()
+                            .send_message(peer_id, request_message.clone());
+                    }
+                    interval1 = time::interval(Duration::from_secs(8));
+                    interval1.reset();
                 }
             }
         }
@@ -170,9 +188,10 @@ async fn handle_event(
     swarm: &mut Swarm<AgentBehavior>,
     swarm_event: SwarmEvent<AgentEvent>,
     local_key: Keypair,
+    peer_list: &mut Vec<PeerId>,
 ) {
-    info!("swarm_event is {:?}", swarm_event);
     match swarm_event {
+        SwarmEvent::ConnectionEstablished { peer_id, .. } => peer_list.push(peer_id),
         SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
             peer,
             message,
