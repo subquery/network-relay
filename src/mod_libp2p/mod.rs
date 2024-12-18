@@ -41,7 +41,7 @@ use tracing::warn;
 pub mod behavior;
 pub mod message;
 
-const BOOTNODES: [&str; 1] = ["16Uiu2HAmLiJHsiwFyVEXnN6QvdH1eVBrsaTNdPqA6xxJbTf1bMbz"];
+const BOOTNODES: [&str; 1] = ["16Uiu2HAm1KHBgyu66L29vREWcfvfabe5Kx2M4JLif8B2jfai9Axk"];
 
 const TESTNET_ADDRESS: [&str; 1] = ["/ip4/192.168.1.136/tcp/8003"];
 
@@ -192,6 +192,7 @@ async fn handle_event(
 ) {
     match swarm_event {
         SwarmEvent::ConnectionEstablished { peer_id, .. } => peer_list.push(peer_id),
+        SwarmEvent::ConnectionClosed { peer_id, .. } => peer_list.retain(|&x| x != peer_id),
         SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
             peer,
             message,
