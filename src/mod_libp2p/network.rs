@@ -66,14 +66,18 @@ impl EventLoop {
                             .add_address(&peer_id, address)
                     }
                     _ => {
-                        warn!("file: {}, line: {}, endpoint: {:?}", file!(), line!(), endpoint);
-
+                        warn!(
+                            "file: {}, line: {}, endpoint: {:?}",
+                            file!(),
+                            line!(),
+                            endpoint
+                        );
                     }
                 };
             }
-            SwarmEvent::ConnectionClosed { peer_id, ..} => {
+            SwarmEvent::ConnectionClosed { peer_id, .. } => {
                 self.swarm.behaviour_mut().kad.remove_peer(&peer_id);
-            },
+            }
             SwarmEvent::Behaviour(AgentEvent::Identify(sub_event)) => {
                 self.handle_identify_event(sub_event).await
             }
@@ -96,7 +100,22 @@ impl EventLoop {
         }
     }
 
-    async fn handle_identify_event(&mut self, event: IdentifyEvent) {}
+    async fn handle_identify_event(&mut self, event: IdentifyEvent) {
+        match event {
+            IdentifyEvent::Received { peer_id, info, .. } => {
+                warn!(
+                    "peer_id.to_base58() : {:?}, METRICS_PEER_ID",
+                    peer_id.to_base58(),
+                );
+                for addr in info.clone().listen_addrs {
+                    warn!(" metrics peer found, addr is {:?}", addr);
+                    // _ = self.swarm.dial(addr);
+                    self.swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                }
+            }
+            _ => {}
+        }
+    }
 
     async fn handle_kad_event(&mut self, event: KademliaEvent) {
         warn!("kad event is {:?}", event);
