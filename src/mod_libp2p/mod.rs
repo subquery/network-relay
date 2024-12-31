@@ -11,6 +11,7 @@ use libp2p::{
     gossipsub::{self, Event as GossipsubEvent},
     identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig},
     identity::{self, Keypair},
+    kad,
     kad::{store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig},
     mdns,
     multiaddr::Protocol,
@@ -40,10 +41,11 @@ use tracing::warn;
 
 pub mod behavior;
 pub mod message;
+pub mod network;
 
-const BOOTNODES: [&str; 1] = ["16Uiu2HAm1KHBgyu66L29vREWcfvfabe5Kx2M4JLif8B2jfai9Axk"];
+// const BOOT_NODE: &str = "16Uiu2HAmGhmfeYmefx3fJGkojaUBkWS8oYZrkmYmXZ3Ey844qLwf";
 
-const TESTNET_ADDRESS: [&str; 1] = ["/ip4/192.168.1.136/tcp/8003"];
+const BOOT_ADDRESS: &str = "/ip4/192.168.1.136/tcp/8002";
 
 pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Error>> {
     let sk = std::env::var("ACCOUNT_SK").expect("ACCOUNT_SK missing in .env");
@@ -83,7 +85,11 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
         .with_behaviour(|key| {
             let local_peer_id = PeerId::from(key.clone().public());
 
-            let kad_config = KadConfig::new(StreamProtocol::new("/agent/connection/1.0.0"));
+            let mut kad_config = KadConfig::new(StreamProtocol::new("/agent/connection/1.0.0"));
+            kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(10)));
+            kad_config.set_publication_interval(Some(Duration::from_secs(120)));
+            kad_config.set_replication_interval(Some(Duration::from_secs(120)));
+            kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(300)));
             let kad_memory = KadInMemory::new(local_peer_id);
             let kad = KadBehavior::with_config(local_peer_id, kad_memory, kad_config);
 
@@ -129,18 +135,20 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 
-    for (peer, addr) in BOOTNODES.iter().zip(TESTNET_ADDRESS.iter()) {
-        let peer_id: PeerId = peer.parse()?;
-        let multiaddr: Multiaddr = addr.parse()?;
-        swarm.behaviour_mut().kad.add_address(&peer_id, multiaddr);
-    }
+    // for (peer, addr) in BOOTNODES.iter().zip(TESTNET_ADDRESS.iter()) {
+    //     let peer_id: PeerId = peer.parse()?;
+    //     let multiaddr: Multiaddr = addr.parse()?;
+    //     swarm.behaviour_mut().kad.add_address(&peer_id, multiaddr);
+    // }
 
-    let mut multiaddr_list: Vec<Multiaddr> = vec![];
-    for to_dial in TESTNET_ADDRESS {
-        let addr: Multiaddr = parse_legacy_multiaddr(&to_dial)?;
-        multiaddr_list.push(addr.clone());
-        let _ = swarm.dial(addr)?;
-    }
+    // let mut multiaddr_list: Vec<Multiaddr> = vec![];
+    let addr: Multiaddr = parse_legacy_multiaddr(&BOOT_ADDRESS)?;
+    // multiaddr_list.push(addr.clone());
+    let _ = swarm.dial(addr)?;
+    // for to_dial in TESTNET_ADDRESS {
+    // }
+
+    swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
 
     swarm
         .behaviour_mut()
@@ -155,104 +163,104 @@ pub async fn start_swarm() -> Result<(Swarm<AgentBehavior>, Keypair), Box<dyn Er
     Ok((swarm, libp2p_keypair))
 }
 
-pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>, local_key: Keypair) {
-    let mut interval1 = time::interval(Duration::from_secs(8));
-    let mut peer_list = vec![];
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                Some(event) = swarm.next() => {
-                    warn!("event is {:?}", event);
-                    handle_event(&mut swarm, event, local_key.clone(), &mut peer_list).await;
-                }
-                _ = interval1.tick() => {
-                    let local_peer_id = local_key.public().to_peer_id();
-                    let request = GreetRequest {
-                        message: format!("Send message from: {local_peer_id}:hello gause from network relay -----------------------"),
-                    };
-                    let request_message = AgentMessage::GreetRequest(request);
-                    for peer_id in &peer_list {
-                        let _request_id = swarm
-                            .behaviour_mut()
-                            .send_message(peer_id, request_message.clone());
-                    }
-                    interval1 = time::interval(Duration::from_secs(8));
-                    interval1.reset();
-                }
-            }
-        }
-    });
-}
+// pub async fn handle_swarm_event(mut swarm: Swarm<AgentBehavior>, local_key: Keypair) {
+//     let mut interval1 = time::interval(Duration::from_secs(8));
+//     let mut peer_list = vec![];
+//     tokio::spawn(async move {
+//         loop {
+//             tokio::select! {
+//                 Some(event) = swarm.next() => {
+//                     warn!("event is {:?}", event);
+//                     handle_event(&mut swarm, event, local_key.clone(), &mut peer_list).await;
+//                 }
+//                 _ = interval1.tick() => {
+//                     let local_peer_id = local_key.public().to_peer_id();
+//                     let request = GreetRequest {
+//                         message: format!("Send message from: {local_peer_id}:hello gause from network relay -----------------------"),
+//                     };
+//                     let request_message = AgentMessage::GreetRequest(request);
+//                     for peer_id in &peer_list {
+//                         let _request_id = swarm
+//                             .behaviour_mut()
+//                             .send_message(peer_id, request_message.clone());
+//                     }
+//                     interval1 = time::interval(Duration::from_secs(8));
+//                     interval1.reset();
+//                 }
+//             }
+//         }
+//     });
+// }
 
-async fn handle_event(
-    swarm: &mut Swarm<AgentBehavior>,
-    swarm_event: SwarmEvent<AgentEvent>,
-    local_key: Keypair,
-    peer_list: &mut Vec<PeerId>,
-) {
-    match swarm_event {
-        SwarmEvent::ConnectionEstablished { peer_id, .. } => peer_list.push(peer_id),
-        SwarmEvent::ConnectionClosed { peer_id, .. } => peer_list.retain(|&x| x != peer_id),
-        SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
-            peer,
-            message,
-        })) => match message {
-            RequestResponseMessage::Request {
-                request_id,
-                request,
-                channel,
-            } => {
-                // let parsed_request =
-                //     AgentMessage::from_binary(&request).expect("Failed to decode request");
-                match request {
-                    AgentMessage::GreetRequest(..) => {}
-                    AgentMessage::AnotherMessage(..) => {}
-                    _ => {
-                        info!("Received unknown message type.");
-                    }
-                }
-                let local_peer_id = local_key.public().to_peer_id();
-                let response = GreetResponse {
-                    message: format!("Response from: {local_peer_id}: hello too").to_string(),
-                };
-                let response_message = AgentMessage::GreetResponse(response);
-                let result = swarm
-                    .behaviour_mut()
-                    .send_response(channel, response_message);
-                if result.is_err() {
-                    let err = result.unwrap_err();
-                    error!("Error sending response: {err:?}")
-                }
-            }
-            RequestResponseMessage::Response {
-                request_id,
-                response,
-            } => {
-                // let parsed_response =
-                //     AgentMessage::from_binary(&response).expect("Failed to decode response");
-                match response {
-                    AgentMessage::GreetResponse(..) => {}
-                    _ => {
-                        info!("Received unknown response type.");
-                    }
-                }
-            }
-        },
-        // Behaviour(Gossipsub(Message { propagation_source: PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS"), message_id: MessageId(3134393231373432343733363435313537303031), message: Message { data: 7b2274797065223a22.., source: Some(PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS")), sequence_number: Some(1733299423449580817), topic: TopicHash { hash: "chat" } } }))
-        SwarmEvent::Behaviour(AgentEvent::Gossipsub(event)) => match event {
-            GossipsubEvent::Message { message, .. } => {
-                match AgentMessage::from_binary(&message.data) {
-                    Ok(..) => {
-                        // info!("broadcast agent message is {:#?}", agent_message);
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        },
-        _ => {}
-    }
-}
+// async fn handle_event(
+//     swarm: &mut Swarm<AgentBehavior>,
+//     swarm_event: SwarmEvent<AgentEvent>,
+//     local_key: Keypair,
+//     peer_list: &mut Vec<PeerId>,
+// ) {
+//     match swarm_event {
+//         SwarmEvent::ConnectionEstablished { peer_id, .. } => peer_list.push(peer_id),
+//         SwarmEvent::ConnectionClosed { peer_id, .. } => {peer_list.retain(|&x| x != peer_id)},
+//         SwarmEvent::Behaviour(AgentEvent::RequestResponse(RequestResponseEvent::Message {
+//             peer,
+//             message,
+//         })) => match message {
+//             RequestResponseMessage::Request {
+//                 request_id,
+//                 request,
+//                 channel,
+//             } => {
+//                 // let parsed_request =
+//                 //     AgentMessage::from_binary(&request).expect("Failed to decode request");
+//                 match request {
+//                     AgentMessage::GreetRequest(..) => {}
+//                     AgentMessage::AnotherMessage(..) => {}
+//                     _ => {
+//                         info!("Received unknown message type.");
+//                     }
+//                 }
+//                 let local_peer_id = local_key.public().to_peer_id();
+//                 let response = GreetResponse {
+//                     message: format!("Response from: {local_peer_id}: hello too").to_string(),
+//                 };
+//                 let response_message = AgentMessage::GreetResponse(response);
+//                 let result = swarm
+//                     .behaviour_mut()
+//                     .send_response(channel, response_message);
+//                 if result.is_err() {
+//                     let err = result.unwrap_err();
+//                     error!("Error sending response: {err:?}")
+//                 }
+//             }
+//             RequestResponseMessage::Response {
+//                 request_id,
+//                 response,
+//             } => {
+//                 // let parsed_response =
+//                 //     AgentMessage::from_binary(&response).expect("Failed to decode response");
+//                 match response {
+//                     AgentMessage::GreetResponse(..) => {}
+//                     _ => {
+//                         info!("Received unknown response type.");
+//                     }
+//                 }
+//             }
+//         },
+//         // Behaviour(Gossipsub(Message { propagation_source: PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS"), message_id: MessageId(3134393231373432343733363435313537303031), message: Message { data: 7b2274797065223a22.., source: Some(PeerId("16Uiu2HAmDDTVeUo5tUM58BP5YyyJGfVo6YaKwFXkf4UKydbZofDS")), sequence_number: Some(1733299423449580817), topic: TopicHash { hash: "chat" } } }))
+//         SwarmEvent::Behaviour(AgentEvent::Gossipsub(event)) => match event {
+//             GossipsubEvent::Message { message, .. } => {
+//                 match AgentMessage::from_binary(&message.data) {
+//                     Ok(..) => {
+//                         // info!("broadcast agent message is {:#?}", agent_message);
+//                     }
+//                     _ => {}
+//                 }
+//             }
+//             _ => {}
+//         },
+//         _ => {}
+//     }
+// }
 
 /// Get the current ipfs repo path, either from the IPFS_PATH environment variable or
 /// from the default $HOME/.ipfs

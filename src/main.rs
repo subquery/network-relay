@@ -1,4 +1,4 @@
-use mod_libp2p::{handle_swarm_event, start_swarm};
+use mod_libp2p::{network::EventLoop, start_swarm};
 use std::io::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -52,7 +52,11 @@ async fn main() {
     // bootstrap(&send).await;
 
     match start_swarm().await {
-        Ok((swarm, local_key)) => handle_swarm_event(swarm, local_key).await,
+        Ok((swarm, local_key)) => {
+            let mut event_loop = EventLoop::new(swarm);
+            event_loop.start_provider().await;
+            event_loop.run().await;
+        }
         Err(err) => info!("start libp2p swarm failed, the err is {:?}", err),
     }
     loop {}
