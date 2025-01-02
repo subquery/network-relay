@@ -25,58 +25,55 @@ async fn main() {
         )
         .init();
 
-    // let addr_str = std::env::args().nth(1).unwrap_or("0.0.0.0:7370".to_owned());
-    // let addr: SocketAddr = addr_str.parse().expect("invalid addr");
+    let addr_str = std::env::args().nth(1).unwrap_or("0.0.0.0:7370".to_owned());
+    let addr: SocketAddr = addr_str.parse().expect("invalid addr");
 
-    // // start new network
-    // let (out_send, mut out_recv, _inner_send, inner_recv) = channel_rpc_channel();
-    // tokio::spawn(async move {
-    //     while let Some(msg) = out_recv.recv().await {
-    //         println!("GOT NOT HANDLE RPC: {:?}", msg);
-    //     }
-    // });
-    // println!("* P2P  listening: {}", addr);
+    // start new network
+    let (out_send, mut out_recv, _inner_send, inner_recv) = channel_rpc_channel();
+    tokio::spawn(async move {
+        while let Some(msg) = out_recv.recv().await {
+            println!("GOT NOT HANDLE RPC: {:?}", msg);
+        }
+    });
+    println!("* P2P  listening: {}", addr);
 
-    // let mut config = Config::default();
+    let mut config = Config::default();
 
-    // config.only_stable_data = false;
-    // config.db_path = Some(PathBuf::from("./.data/p2p"));
-    // config.rpc_http = None;
-    // config.p2p_peer = Peer::socket(addr);
-    // config.rpc_channel = Some((out_send, inner_recv));
-    // config.group_ids = vec![ROOT_GROUP_ID];
+    config.only_stable_data = false;
+    config.db_path = Some(PathBuf::from("./.data/p2p"));
+    config.rpc_http = None;
+    config.p2p_peer = Peer::socket(addr);
+    config.rpc_channel = Some((out_send, inner_recv));
+    config.group_ids = vec![ROOT_GROUP_ID];
 
-    // let (peer_addr, send, mut out_recv) = start_with_config(config).await.unwrap();
-    // println!("* TDN PEER ID       : {:?}", peer_addr);
+    let (peer_addr, send, mut out_recv) = start_with_config(config).await.unwrap();
+    println!("* TDN PEER ID       : {:?}", peer_addr);
 
-    // bootstrap(&send).await;
+    bootstrap(&send).await;
 
     match start_swarm().await {
-        Ok((swarm, local_key)) => {
+        Ok((swarm, _local_key)) => {
             let mut event_loop = EventLoop::new(swarm);
-            event_loop.start_provider().await;
             event_loop.run().await;
         }
         Err(err) => info!("start libp2p swarm failed, the err is {:?}", err),
     }
-    loop {}
 
-    // while let Some(message) = out_recv.recv().await {
-    //     match message {
-    //         ReceiveMessage::Group(msg) => {
-    //             if let Ok(result) = handle_group(msg).await {
-    //                 handle_result(result, &send).await;
-    //             }
-    //         }
-    //         ReceiveMessage::NetworkLost => {
-    //             // println!("No network connections, will re-connnect");
-    //             bootstrap(&send).await;
-    //         }
-    //         _ => {
-    //             println!("Nothing about this message");
-    //         }
-    //     }
-    // }
+    while let Some(message) = out_recv.recv().await {
+        match message {
+            ReceiveMessage::Group(msg) => {
+                if let Ok(result) = handle_group(msg).await {
+                    handle_result(result, &send).await;
+                }
+            }
+            ReceiveMessage::NetworkLost => {
+                bootstrap(&send).await;
+            }
+            _ => {
+                println!("Nothing about this message");
+            }
+        }
+    }
 }
 
 async fn handle_result(result: HandleResult, sender: &Sender<SendMessage>) {
