@@ -1,4 +1,4 @@
-use mod_libp2p::{network::EventLoop, start_swarm};
+use mod_libp2p::network::EventLoop;
 use std::io::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use tdn::prelude::{
     ReceiveMessage, RecvType, SendMessage, SendType,
 };
 use tokio::sync::mpsc::Sender;
-use tracing::info;
+use tracing::error;
 mod mod_libp2p;
 
 #[tokio::main]
@@ -51,12 +51,11 @@ async fn main() {
 
     bootstrap(&send).await;
 
-    match start_swarm().await {
-        Ok((swarm, _local_key)) => {
-            let mut event_loop = EventLoop::new(swarm);
+    match EventLoop::new().await {
+        Ok(mut event_loop) => {
             event_loop.run().await;
         }
-        Err(err) => info!("start libp2p swarm failed, the err is {:?}", err),
+        Err(err) => error!("start libp2p swarm failed, the err is {:?}", err),
     }
 
     while let Some(message) = out_recv.recv().await {
