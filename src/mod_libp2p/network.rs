@@ -4,12 +4,13 @@ use either::Either;
 use futures_util::StreamExt;
 use libp2p::{
     core::transport::upgrade::Version,
-    identify::Event as IdentifyEvent,
-    identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig},
+    dns,
+    identify::{Behaviour as IdentifyBehavior, Config as IdentifyConfig, Event as IdentifyEvent},
     identity::{self, Keypair},
-    kad,
-    kad::Event as KademliaEvent,
-    kad::{store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig},
+    kad::{
+        self, store::MemoryStore as KadInMemory, Behaviour as KadBehavior, Config as KadConfig,
+        Event as KademliaEvent,
+    },
     noise, ping,
     ping::Event as PingEvent,
     pnet::{PnetConfig, PreSharedKey},
@@ -93,6 +94,9 @@ impl EventLoop {
                 yamux_config.set_max_num_streams(1024 * 1024);
                 let base_transport =
                     tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
+                let base_transport = dns::tokio::Transport::system(base_transport)
+                    .expect("DNS")
+                    .boxed();
                 let maybe_encrypted = match psk {
                     Ok(psk) => Either::Left(
                         base_transport
