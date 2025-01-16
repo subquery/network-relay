@@ -13,7 +13,21 @@ env_logger = "0.11.5"
 futures = "0.3.31"
 futures-util = "0.3.31"
 hex = "0.4"
-libp2p = { version = "0.54", features = ["full"] }
+libp2p = { version = "0.55", features = [
+  "dns",
+  "tokio",
+  "identify",
+  "json",
+  "kad",
+  "ping",
+  "pnet",
+  "request-response",
+  "secp256k1",
+  "serde",
+  "tcp",
+  "yamux",
+  "noise",
+] }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
 subql-indexer-utils = { git = "https://github.com/subquery/network-indexer-services.git", tag = "v2.8.1" }
